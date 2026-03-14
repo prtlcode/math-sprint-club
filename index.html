@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#ffe08a" />
+    <title>Math Sprint Club</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Bilingual speed practice</p>
+          <h1>Math Sprint Club</h1>
+          <p class="subtitle">
+            Build fast multiplication and division memory with voice, visuals,
+            and tiny wins every round.
+          </p>
+        </div>
+        <div class="status-card">
+          <div class="status-line">
+            <span>Level</span>
+            <strong id="levelLabel">1</strong>
+          </div>
+          <div class="status-line">
+            <span>Streak</span>
+            <strong id="streakLabel">0</strong>
+          </div>
+          <div class="status-line">
+            <span>Best</span>
+            <strong id="bestLabel">0</strong>
+          </div>
+        </div>
+      </header>
+
+      <main class="game-grid">
+        <section class="panel challenge-panel">
+          <div class="challenge-topbar">
+            <div class="pill" id="modeLabel">Equation</div>
+            <div class="pill timer-pill">Time <span id="timerLabel">12</span></div>
+          </div>
+
+          <div class="prompt-block">
+            <p class="prompt-language" id="languageLabel">Press Start</p>
+            <div class="prompt-text" id="promptText"></div>
+            <div class="visual-zone" id="visualZone" aria-live="polite"></div>
+          </div>
+
+          <div class="input-row">
+            <input
+              id="answerInput"
+              type="text"
+              inputmode="numeric"
+              autocomplete="off"
+              placeholder="Type answer"
+              aria-label="Type answer"
+            />
+            <button id="submitButton" class="primary-button">Answer</button>
+            <button id="micButton" class="secondary-button" type="button">
+              Speak
+            </button>
+          </div>
+
+          <div class="feedback" id="feedbackText" aria-live="polite"></div>
+
+          <div class="start-row" id="startRow">
+            <button id="startButton" class="primary-button" type="button">
+              Start Round
+            </button>
+          </div>
+
+          <div class="controls-row">
+            <button id="repeatButton" class="ghost-button" type="button">
+              Hear again
+            </button>
+            <button id="skipButton" class="ghost-button" type="button">
+              Skip
+            </button>
+          </div>
+        </section>
+
+        <aside class="panel side-panel">
+          <section>
+            <h2>Progress</h2>
+            <div class="meter-row">
+              <span>Round XP</span>
+              <div class="meter">
+                <div class="meter-fill" id="xpFill"></div>
+              </div>
+              <span id="xpLabel">0%</span>
+            </div>
+            <p class="microcopy" id="coachText">
+              Start strong with easy facts, then level up as your speed improves.
+            </p>
+          </section>
+
+          <section>
+            <h2>How You Can Answer</h2>
+            <ul class="hint-list">
+              <li>Speak in English or Japanese</li>
+              <li>Or type the number answer</li>
+              <li>Beat the timer to protect your streak</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2>Focus Facts</h2>
+            <div id="focusFacts" class="facts-list"></div>
+          </section>
+
+          <section>
+            <h2>Update Status</h2>
+            <p class="microcopy" id="updateText">
+              The app checks for new versions in the background.
+            </p>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <template id="groupTemplate">
+      <div class="group-card">
+        <div class="group-dots"></div>
+        <span class="group-label"></span>
+      </div>
+    </template>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
