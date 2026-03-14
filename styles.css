@@ -16,6 +16,41 @@
   --font-body: "Verdana", "Hiragino Kaku Gothic ProN", sans-serif;
 }
 
+body[data-level-tone="0"] {
+  --accent: #ff8b5e;
+  --accent-strong: #ec5f2a;
+  --sky: #69b8ff;
+  --mint: #5ecf9a;
+}
+
+body[data-level-tone="1"] {
+  --accent: #ff6f91;
+  --accent-strong: #e84470;
+  --sky: #7d8cff;
+  --mint: #63d8c1;
+}
+
+body[data-level-tone="2"] {
+  --accent: #f06d18;
+  --accent-strong: #cf4e05;
+  --sky: #53c3ff;
+  --mint: #7adb6d;
+}
+
+body[data-level-tone="3"] {
+  --accent: #25a06d;
+  --accent-strong: #138658;
+  --sky: #59b5ff;
+  --mint: #9cde59;
+}
+
+body[data-level-tone="4"] {
+  --accent: #7c67ff;
+  --accent-strong: #5740e6;
+  --sky: #55d8ff;
+  --mint: #7ef3b0;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -29,6 +64,11 @@ body {
     radial-gradient(circle at top left, rgba(255, 255, 255, 0.9), transparent 26%),
     radial-gradient(circle at bottom right, rgba(105, 184, 255, 0.22), transparent 28%),
     linear-gradient(160deg, #fff5d2, #f7f1ff 52%, #ddf4ff);
+  transition: background 420ms ease, color 240ms ease;
+}
+
+body.level-up-pulse {
+  animation: levelPulse 1.5s ease;
 }
 
 .app-shell {
@@ -151,6 +191,19 @@ h1 {
   line-height: 1.2;
 }
 
+.prompt-kicker {
+  display: inline-flex;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(36, 48, 66, 0.08);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 .visual-zone {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -235,6 +288,7 @@ button:active {
   margin-top: 16px;
   font-size: 1.05rem;
   font-weight: 700;
+  line-height: 1.45;
 }
 
 .start-row {
@@ -304,6 +358,21 @@ rt {
   border-radius: 999px;
   background: rgba(255, 139, 94, 0.14);
   font-weight: 700;
+}
+
+@keyframes levelPulse {
+  0% {
+    transform: scale(1);
+    filter: saturate(1);
+  }
+  35% {
+    transform: scale(1.01);
+    filter: saturate(1.15);
+  }
+  100% {
+    transform: scale(1);
+    filter: saturate(1);
+  }
 }
 
 @media (max-width: 920px) {
