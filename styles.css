@@ -175,6 +175,15 @@ h1 {
   color: var(--accent-strong);
 }
 
+.timer-button {
+  border: 0;
+}
+
+.timer-button.test-mode-active {
+  background: linear-gradient(135deg, rgba(124, 103, 255, 0.18), rgba(85, 216, 255, 0.18));
+  color: #4f3dd9;
+}
+
 .prompt-block {
   padding: 24px 0 12px;
 }

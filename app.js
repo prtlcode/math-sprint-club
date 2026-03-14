@@ -5,6 +5,7 @@
   const FEEDBACK_MIN_MS = 2200;
   const state = {
     profile: loadProfile(),
+    sessionProfile: null,
     currentProblem: null,
     timerValue: 12,
     timerId: null,
@@ -40,6 +41,8 @@
     focusFacts: document.getElementById("focusFacts"),
     updateText: document.getElementById("updateText"),
     groupTemplate: document.getElementById("groupTemplate"),
+    timerToggle: document.getElementById("timerToggle"),
+    timerModeLabel: document.getElementById("timerModeLabel"),
   };
 
   const speechRecognition =
@@ -111,11 +114,38 @@
       seenProblemIds: Array.isArray(raw.seenProblemIds) ? raw.seenProblemIds.slice(-80) : [],
       lastVersion: raw.lastVersion || null,
       speechPref: raw.speechPref || "auto",
+      testMode: Boolean(raw.testMode),
     };
   }
 
   function saveProfile() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state.profile));
+  }
+
+  function cloneFactStats(stats) {
+    return JSON.parse(JSON.stringify(stats || {}));
+  }
+
+  function createSessionProfile() {
+    return {
+      streak: state.profile.streak,
+      bestStreak: state.profile.bestStreak,
+      level: state.profile.level,
+      totalCorrect: state.profile.totalCorrect,
+      totalAnswered: state.profile.totalAnswered,
+      xpInLevel: state.profile.xpInLevel,
+      factStats: cloneFactStats(state.profile.factStats),
+    };
+  }
+
+  function getActiveProfile() {
+    if (state.profile.testMode) {
+      if (!state.sessionProfile) {
+        state.sessionProfile = createSessionProfile();
+      }
+      return state.sessionProfile;
+    }
+    return state.profile;
   }
 
   function getLevelConfig(level) {
@@ -141,15 +171,16 @@
   }
 
   function getFactStat(key) {
-    if (!state.profile.factStats[key]) {
-      state.profile.factStats[key] = {
+    const activeProfile = getActiveProfile();
+    if (!activeProfile.factStats[key]) {
+      activeProfile.factStats[key] = {
         correct: 0,
         wrong: 0,
         mastery: 0,
         lastSeen: 0,
       };
     }
-    return state.profile.factStats[key];
+    return activeProfile.factStats[key];
   }
 
   function weightedChoice(items) {
@@ -217,7 +248,8 @@
   }
 
   function buildProblem() {
-    const config = getLevelConfig(state.profile.level);
+    const activeProfile = getActiveProfile();
+    const config = getLevelConfig(activeProfile.level);
     const type = chooseProblemType(config);
     const operator = chooseOperator(config);
     const language = Math.random() < 0.55 ? "English" : "Japanese";
@@ -581,7 +613,8 @@
       return;
     }
     stopTimer();
-    state.profile.totalAnswered += 1;
+    const activeProfile = getActiveProfile();
+    activeProfile.totalAnswered += 1;
     const stat = getFactStat(problem.key);
     stat.lastSeen = Date.now();
 
@@ -589,18 +622,18 @@
     if (answer === problem.answer && !timedOut) {
       stat.correct += 1;
       stat.mastery = Math.min(10, stat.mastery + 2);
-      state.profile.streak += 1;
-      state.profile.bestStreak = Math.max(state.profile.bestStreak, state.profile.streak);
-      state.profile.totalCorrect += 1;
-      state.profile.xpInLevel += 18;
+      activeProfile.streak += 1;
+      activeProfile.bestStreak = Math.max(activeProfile.bestStreak, activeProfile.streak);
+      activeProfile.totalCorrect += 1;
+      activeProfile.xpInLevel += 18;
       message = randomLine(coachVoices.correct);
       setFeedback(message, "correct");
       playTone(true);
     } else {
       stat.wrong += 1;
       stat.mastery = Math.max(0, stat.mastery - 3);
-      state.profile.streak = 0;
-      state.profile.xpInLevel = Math.max(0, state.profile.xpInLevel - 4);
+      activeProfile.streak = 0;
+      activeProfile.xpInLevel = Math.max(0, activeProfile.xpInLevel - 4);
       message = timedOut
         ? `${randomLine(coachVoices.timeout)} Answer: ${problem.answer}`
         : `${randomLine(coachVoices.incorrect)} Answer: ${problem.answer}`;
@@ -608,8 +641,10 @@
       playTone(false);
     }
 
-    const levelUpMessages = maybeLevelUp();
-    saveProfile();
+    const levelUpMessages = maybeLevelUp(activeProfile);
+    if (!state.profile.testMode) {
+      saveProfile();
+    }
     updateDashboard();
 
     const speechQueue = [message, ...levelUpMessages];
@@ -623,26 +658,28 @@
     window.setTimeout(startRound, remainder + 300);
   }
 
-  function maybeLevelUp() {
+  function maybeLevelUp(activeProfile) {
     const messages = [];
     let leveled = false;
-    while (state.profile.xpInLevel >= 100) {
-      state.profile.xpInLevel -= 100;
-      state.profile.level += 1;
-      messages.push(`Level up! Welcome to level ${state.profile.level}.`);
+    while (activeProfile.xpInLevel >= 100) {
+      activeProfile.xpInLevel -= 100;
+      activeProfile.level += 1;
+      messages.push(`Level up! Welcome to level ${activeProfile.level}.`);
       leveled = true;
     }
     if (leveled) {
-      const level = state.profile.level;
+      const level = activeProfile.level;
       elements.coachText.textContent =
-        `Level ${level} unlocked. The colors and challenge both just got brighter.`;
-      triggerLevelPulse();
+        state.profile.testMode
+          ? `Test mode level ${level}. Real learner progress is unchanged.`
+          : `Level ${level} unlocked. The colors and challenge both just got brighter.`;
+      triggerLevelPulse(level);
     }
     return messages;
   }
 
-  function triggerLevelPulse() {
-    document.body.dataset.levelTone = String((state.profile.level - 1) % 5);
+  function triggerLevelPulse(level) {
+    document.body.dataset.levelTone = String((level - 1) % 5);
     document.body.classList.remove("level-up-pulse");
     void document.body.offsetWidth;
     document.body.classList.add("level-up-pulse");
@@ -667,22 +704,29 @@
   }
 
   function updateDashboard() {
-    elements.levelLabel.textContent = String(state.profile.level);
-    elements.streakLabel.textContent = String(state.profile.streak);
-    elements.bestLabel.textContent = String(state.profile.bestStreak);
-    const xpPercent = Math.max(0, Math.min(100, state.profile.xpInLevel));
+    const activeProfile = getActiveProfile();
+    elements.levelLabel.textContent = String(activeProfile.level);
+    elements.streakLabel.textContent = String(activeProfile.streak);
+    elements.bestLabel.textContent = String(activeProfile.bestStreak);
+    const xpPercent = Math.max(0, Math.min(100, activeProfile.xpInLevel));
     elements.xpFill.style.width = `${xpPercent}%`;
     elements.xpLabel.textContent = `${xpPercent}%`;
     elements.coachText.textContent = buildCoachText();
     renderFocusFacts();
-    document.body.dataset.levelTone = String((state.profile.level - 1) % 5);
+    document.body.dataset.levelTone = String((activeProfile.level - 1) % 5);
+    elements.timerToggle.classList.toggle("test-mode-active", state.profile.testMode);
+    elements.timerModeLabel.textContent = state.profile.testMode ? "Test" : "Time";
   }
 
   function buildCoachText() {
-    const accuracy = state.profile.totalAnswered
-      ? Math.round((state.profile.totalCorrect / state.profile.totalAnswered) * 100)
+    const activeProfile = getActiveProfile();
+    const accuracy = activeProfile.totalAnswered
+      ? Math.round((activeProfile.totalCorrect / activeProfile.totalAnswered) * 100)
       : 0;
-    if (state.profile.streak >= 8) {
+    if (state.profile.testMode) {
+      return "Test mode is on. You can explore here without changing the learner's saved progress.";
+    }
+    if (activeProfile.streak >= 8) {
       return "Amazing pace. The next questions may stretch past the 10 times table.";
     }
     if (accuracy >= 80) {
@@ -692,7 +736,15 @@
   }
 
   function renderFocusFacts() {
-    const entries = Object.entries(state.profile.factStats)
+    if (state.profile.testMode) {
+      elements.focusFacts.innerHTML = "";
+      const chip = document.createElement("div");
+      chip.className = "fact-chip";
+      chip.textContent = "Test mode";
+      elements.focusFacts.appendChild(chip);
+      return;
+    }
+    const entriesVisible = Object.entries(state.profile.factStats)
       .sort((left, right) => {
         const a = left[1];
         const b = right[1];
@@ -700,14 +752,14 @@
       })
       .slice(0, 6);
     elements.focusFacts.innerHTML = "";
-    if (!entries.length) {
+    if (!entriesVisible.length) {
       const chip = document.createElement("div");
       chip.className = "fact-chip";
       chip.textContent = "New learner";
       elements.focusFacts.appendChild(chip);
       return;
     }
-    entries.forEach(([fact]) => {
+    entriesVisible.forEach(([fact]) => {
       const chip = document.createElement("div");
       chip.className = "fact-chip";
       chip.textContent = fact;
@@ -985,6 +1037,18 @@
     });
     elements.startButton.addEventListener("click", () => {
       startRound();
+    });
+    elements.timerToggle.addEventListener("click", () => {
+      state.profile.testMode = !state.profile.testMode;
+      state.sessionProfile = state.profile.testMode ? createSessionProfile() : null;
+      saveProfile();
+      updateDashboard();
+      setFeedback(
+        state.profile.testMode
+          ? "Test mode on. This round will not change the learner's saved status."
+          : "Test mode off. Real progress tracking is active again.",
+        "correct"
+      );
     });
     elements.micButton.addEventListener("click", () => {
       if (!state.gameStarted) {
