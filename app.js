@@ -19,9 +19,7 @@
     recognitionBusy: false,
     voices: [],
     activeUtterance: null,
-    activeAudio: null,
     levelPulseTimer: null,
-    ttsAvailable: "unknown",
     buddyMessages: [],
   };
 
@@ -860,11 +858,6 @@
   }
 
   function stopSpeaking() {
-    if (state.activeAudio) {
-      state.activeAudio.pause();
-      URL.revokeObjectURL(state.activeAudio.src);
-      state.activeAudio = null;
-    }
     if (synth) {
       synth.cancel();
     }
@@ -875,42 +868,7 @@
     if (!text) {
       return;
     }
-    const remoteWorked = await tryRemoteTts(text, lang);
-    if (remoteWorked) {
-      return;
-    }
     return speakWithBrowser(text, lang);
-  }
-
-  async function tryRemoteTts(text, lang) {
-    if (state.ttsAvailable === false) {
-      return false;
-    }
-    try {
-      const response = await fetch("/.netlify/functions/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, language: lang }),
-      });
-      if (!response.ok) {
-        state.ttsAvailable = false;
-        return false;
-      }
-      const blob = await response.blob();
-      const audio = new Audio(URL.createObjectURL(blob));
-      state.activeAudio = audio;
-      state.ttsAvailable = true;
-      await new Promise((resolve) => {
-        audio.onended = resolve;
-        audio.onerror = resolve;
-        audio.play().catch(resolve);
-      });
-      state.activeAudio = null;
-      return true;
-    } catch (error) {
-      state.ttsAvailable = false;
-      return false;
-    }
   }
 
   function speakWithBrowser(text, lang) {
@@ -1008,30 +966,6 @@
     }
     addBuddyMessage("user", prompt);
     elements.buddyStatus.textContent = "Buddy is thinking...";
-    try {
-      const response = await fetch("/.netlify/functions/buddy-chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userMessage: prompt,
-          problem: {
-            text: problem.plainPrompt,
-            answer: problem.answer,
-            language: problem.language,
-            mode: problem.modeLabel,
-          },
-          pauseReason: state.pauseReason,
-        }),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        addBuddyMessage("buddy", data.reply);
-        elements.buddyStatus.textContent = "Buddy is ready.";
-        return;
-      }
-    } catch (error) {
-      console.warn("Buddy fallback", error);
-    }
     addBuddyMessage("buddy", localBuddyReply(prompt, problem));
     elements.buddyStatus.textContent = "Buddy is ready.";
   }
@@ -1164,7 +1098,7 @@
     elements.visualZone.innerHTML = "";
     elements.timerLabel.textContent = String(state.timerValue);
     elements.updateText.textContent =
-      "The app checks for new versions in the background. If Netlify has an OpenAI key, the buddy and voice will use a more natural AI service.";
+      "The app checks for new versions in the background and uses the best free voices available on the device.";
     saveProfile();
     checkForUpdates();
     window.setInterval(checkForUpdates, 5 * 60 * 1000);
