@@ -2,6 +2,7 @@
   const STORAGE_KEY = "math-sprint-club-progress-v1";
   const LEGACY_STORAGE_KEY = "math-sprint-club-progress-v2";
   const VERSION_URL = "/version.json";
+  const RESET_MARKER = "2026-03-14-reset-1";
   const FEEDBACK_MIN_MS = 2200;
   const state = {
     profile: loadProfile(),
@@ -9,13 +10,19 @@
     currentProblem: null,
     timerValue: 12,
     timerId: null,
-    recognition: null,
-    recognitionBusy: false,
     pendingReload: false,
     gameStarted: false,
+    paused: false,
+    pauseReason: "",
+    nextAction: "continue",
+    recognition: null,
+    recognitionBusy: false,
     voices: [],
     activeUtterance: null,
+    activeAudio: null,
     levelPulseTimer: null,
+    ttsAvailable: "unknown",
+    buddyMessages: [],
   };
 
   const elements = {
@@ -24,6 +31,8 @@
     bestLabel: document.getElementById("bestLabel"),
     modeLabel: document.getElementById("modeLabel"),
     timerLabel: document.getElementById("timerLabel"),
+    timerToggle: document.getElementById("timerToggle"),
+    timerModeLabel: document.getElementById("timerModeLabel"),
     languageLabel: document.getElementById("languageLabel"),
     promptText: document.getElementById("promptText"),
     visualZone: document.getElementById("visualZone"),
@@ -31,18 +40,29 @@
     submitButton: document.getElementById("submitButton"),
     micButton: document.getElementById("micButton"),
     feedbackText: document.getElementById("feedbackText"),
-    repeatButton: document.getElementById("repeatButton"),
-    skipButton: document.getElementById("skipButton"),
     startRow: document.getElementById("startRow"),
     startButton: document.getElementById("startButton"),
+    pauseButton: document.getElementById("pauseButton"),
+    pauseCard: document.getElementById("pauseCard"),
+    pauseTitle: document.getElementById("pauseTitle"),
+    pauseCopy: document.getElementById("pauseCopy"),
+    pauseResumeButton: document.getElementById("pauseResumeButton"),
+    tipsButton: document.getElementById("tipsButton"),
+    tipsDrawer: document.getElementById("tipsDrawer"),
+    repeatButton: document.getElementById("repeatButton"),
+    skipButton: document.getElementById("skipButton"),
     xpFill: document.getElementById("xpFill"),
     xpLabel: document.getElementById("xpLabel"),
     coachText: document.getElementById("coachText"),
     focusFacts: document.getElementById("focusFacts"),
     updateText: document.getElementById("updateText"),
     groupTemplate: document.getElementById("groupTemplate"),
-    timerToggle: document.getElementById("timerToggle"),
-    timerModeLabel: document.getElementById("timerModeLabel"),
+    buddyPanel: document.getElementById("buddyPanel"),
+    buddyLog: document.getElementById("buddyLog"),
+    buddyInput: document.getElementById("buddyInput"),
+    buddySendButton: document.getElementById("buddySendButton"),
+    buddyHintButton: document.getElementById("buddyHintButton"),
+    buddyStatus: document.getElementById("buddyStatus"),
   };
 
   const speechRecognition =
@@ -64,24 +84,24 @@
     },
     incorrect: {
       en: [
-        "Not yet. We will bring back a close cousin soon.",
-        "Almost. This family of facts will get another turn.",
-        "Good effort. We will remix this one in a new way.",
+        "Not yet. Pause and think it through.",
+        "Almost. Let us reflect on this one.",
+        "Good effort. Take a moment with the answer.",
       ],
       ja: [
-        "まだだいじょうぶ。すこしかえてまたでるよ。",
-        "おしいね。このもんだいはもういちどれんしゅうしよう。",
-        "よくがんばったね。ちがうかたちでまたやろう。",
+        "まだだいじょうぶ。すこし とまって かんがえよう。",
+        "おしいね。こたえを いっしょに みてみよう。",
+        "よくがんばったね。ここで ひといき つこう。",
       ],
     },
     timeout: {
       en: [
-        "Time is up. Breathe, then sprint again.",
-        "The clock won that round. You can restart the streak.",
+        "Time is up. Pause, breathe, and get ready for the next one.",
+        "The clock won that round. Take a moment, then continue.",
       ],
       ja: [
-        "じかんぎれ。つぎでまたチャレンジしよう。",
-        "いまはとけいのかち。つぎでれんぞくせいかいをもどそう。",
+        "じかんぎれ。ひといき ついてから つぎに いこう。",
+        "いまは とけいの かち。すこし やすんで つぎへ いこう。",
       ],
     },
   };
@@ -103,7 +123,7 @@
   }
 
   function normalizeProfile(raw) {
-    return {
+    const profile = {
       streak: Number(raw.streak || 0),
       bestStreak: Number(raw.bestStreak || 0),
       level: Number(raw.level || 1),
@@ -115,7 +135,16 @@
       lastVersion: raw.lastVersion || null,
       speechPref: raw.speechPref || "auto",
       testMode: Boolean(raw.testMode),
+      resetMarker: raw.resetMarker || null,
     };
+    if (profile.resetMarker !== RESET_MARKER) {
+      profile.level = 0;
+      profile.bestStreak = 0;
+      profile.streak = 0;
+      profile.xpInLevel = 0;
+      profile.resetMarker = RESET_MARKER;
+    }
+    return profile;
   }
 
   function saveProfile() {
@@ -149,14 +178,14 @@
   }
 
   function getLevelConfig(level) {
-    const capped = Math.min(level, 12);
+    const effectiveLevel = Math.max(0, Math.min(level, 12));
     return {
-      maxFactor: Math.min(12 + Math.max(0, capped - 3) * 2, 24),
-      timer: Math.max(6, 12 - Math.floor((capped - 1) / 2)),
+      maxFactor: Math.min(10 + Math.max(0, effectiveLevel - 2) * 2, 24),
+      timer: Math.max(6, 12 - Math.floor(effectiveLevel / 2)),
       allowWord: true,
       allowVisual: true,
-      allowMissing: capped >= 2,
-      allowDivision: capped >= 2,
+      allowMissing: effectiveLevel >= 2,
+      allowDivision: effectiveLevel >= 1,
       allowWordNumberMix: true,
     };
   }
@@ -202,10 +231,7 @@
         if (operator === "x" || a % b === 0) {
           const key = getFactKey(operator, a, b);
           const stat = getFactStat(key);
-          const wrongPressure = stat.wrong * 2.2;
-          const notMastered = 7 - stat.mastery;
-          const freshness = Date.now() - stat.lastSeen > 45000 ? 1.5 : 0.3;
-          const weight = Math.max(0.8, wrongPressure + notMastered + freshness);
+          const weight = Math.max(1, 7 - stat.mastery + stat.wrong * 2 + (Date.now() - stat.lastSeen > 45000 ? 1.5 : 0.3));
           facts.push({ value: { a, b, key }, weight });
         }
       }
@@ -220,10 +246,7 @@
         const dividend = divisor * quotient;
         const key = getFactKey("÷", dividend, divisor);
         const stat = getFactStat(key);
-        const wrongPressure = stat.wrong * 2.2;
-        const notMastered = 7 - stat.mastery;
-        const freshness = Date.now() - stat.lastSeen > 45000 ? 1.5 : 0.3;
-        const weight = Math.max(0.8, wrongPressure + notMastered + freshness);
+        const weight = Math.max(1, 7 - stat.mastery + stat.wrong * 2 + (Date.now() - stat.lastSeen > 45000 ? 1.5 : 0.3));
         facts.push({ value: { a: dividend, b: divisor, key }, weight });
       }
     }
@@ -231,13 +254,12 @@
   }
 
   function chooseProblemType(config) {
-    const pool = [
+    return weightedChoice([
       { value: "equation", weight: 3 },
-      { value: "word", weight: config.allowWord ? 2.6 : 0 },
-      { value: "visual", weight: config.allowVisual ? 2.2 : 0 },
+      { value: "word", weight: 2.7 },
+      { value: "visual", weight: 2.2 },
       { value: "missing", weight: config.allowMissing ? 1.8 : 0 },
-    ].filter((item) => item.weight > 0);
-    return weightedChoice(pool);
+    ].filter((item) => item.weight > 0));
   }
 
   function chooseOperator(config) {
@@ -264,7 +286,7 @@
     }
 
     const answer = operator === "x" ? a * b : a / b;
-    const baseProblem = {
+    const base = {
       id: `${type}-${operator}-${a}-${b}-${Date.now()}`,
       type,
       operator,
@@ -277,15 +299,15 @@
     };
 
     if (type === "word") {
-      return buildWordProblem(baseProblem, config);
+      return buildWordProblem(base);
     }
     if (type === "visual") {
-      return buildVisualProblem(baseProblem);
+      return buildVisualProblem(base);
     }
     if (type === "missing") {
-      return buildMissingProblem(baseProblem);
+      return buildMissingProblem(base);
     }
-    return buildEquationProblem(baseProblem);
+    return buildEquationProblem(base);
   }
 
   function buildEquationProblem(problem) {
@@ -301,6 +323,10 @@
         problem.language === "English"
           ? `${sayEquation(problem)}. What is the answer?`
           : `${sayEquationJapanese(problem)}。こたえは いくつ？`,
+      plainPrompt:
+        problem.language === "English"
+          ? `${equation} What is the answer?`
+          : `${problem.a} ${problem.operator} ${problem.b}。こたえは いくつ？`,
       visual: null,
     };
   }
@@ -322,16 +348,20 @@
       spokenText:
         problem.language === "English"
           ? `Fill the missing number. ${display.replace(/__/g, "blank")}.`
-          : `あいている かずは なんですか。${display.replace(/__/g, "blank")}。`,
+          : `あいている かずは なんですか。`,
+      plainPrompt:
+        problem.language === "English"
+          ? `${display} Fill the missing number.`
+          : `${display} あいている かずは？`,
       visual: null,
     };
   }
 
   function buildVisualProblem(problem) {
-    const textPrompt = problem.language === "English"
+    const promptText = problem.language === "English"
       ? (problem.operator === "x"
-          ? `Count the groups in the picture. How many dots in all?`
-          : `The picture shows equal groups. How many dots are in each group?`)
+          ? "Look at the picture. How many dots are there in all?"
+          : "Look at the picture. How many dots are in each equal group?")
       : (problem.operator === "x"
           ? `${rubyText("絵", "え")}を みて、${rubyText("全", "ぜん")}${rubyText("部", "ぶ")}で いくつか こたえよう。`
           : `${rubyText("絵", "え")}を みて、1つぶんの かずを こたえよう。`);
@@ -340,16 +370,17 @@
       modeLabel: "Visual",
       promptHtml:
         problem.language === "English"
-          ? `<span class="prompt-kicker">Look and read</span>${textPrompt}`
-          : `<span class="prompt-kicker">みて よんでみよう</span>${textPrompt}`,
+          ? `<span class="prompt-kicker">Look and read</span>${promptText}`
+          : `<span class="prompt-kicker">みて よんでみよう</span>${promptText}`,
       spokenText:
         problem.language === "English"
           ? (problem.operator === "x"
               ? `${problem.a} groups of ${problem.b}. How many dots in all?`
-              : `${problem.a} dots split into ${problem.b} groups. How many in each group?`)
+              : `${problem.a} dots split into ${problem.b} groups. How many are in each group?`)
           : (problem.operator === "x"
               ? `${problem.a}こ の グループに ${problem.b}こ ずつ。ぜんぶで いくつ？`
               : `${problem.a}この ドットを ${problem.b}つ に わけると 1つぶんは いくつ？`),
+      plainPrompt: stripHtml(promptText),
       visual: {
         groups: problem.operator === "x" ? problem.a : problem.b,
         dotsPerGroup: problem.operator === "x" ? problem.b : problem.answer,
@@ -357,99 +388,42 @@
     };
   }
 
-  function buildWordProblem(problem, config) {
-    const quantityA = englishQuantity(problem.a, config.allowWordNumberMix);
-    const quantityB = englishQuantity(problem.b, config.allowWordNumberMix);
+  function buildWordProblem(problem) {
+    const aDisplay = englishQuantity(problem.a);
+    const bDisplay = englishQuantity(problem.b);
     const scenarios = problem.operator === "x"
       ? [
           {
-            en:
-              `${quantityA} treasure chests each hold ${quantityB} shiny coins. ` +
-              `How many coins are there altogether?`,
-            jaHtml:
-              `${problem.a}${rubyText("個", "こ")}の ${rubyText("宝箱", "たからばこ")}に ${problem.b}${rubyText("枚", "まい")}ずつ ` +
-              `${rubyText("金貨", "きんか")}が はいっています。${rubyText("全", "ぜん")}${rubyText("部", "ぶ")}で ` +
-              `${rubyText("何", "なん")}${rubyText("枚", "まい")}？`,
-            jaReading:
-              `${problem.a}この たからばこに ${problem.b}まいずつ きんかが はいっています。ぜんぶで なんまい？`,
+            en: `${aDisplay} treasure chests each hold ${bDisplay} shiny coins. How many coins are there altogether?`,
+            jaHtml: `${problem.a}${rubyText("個", "こ")}の ${rubyText("宝箱", "たからばこ")}に ${problem.b}${rubyText("枚", "まい")}ずつ ${rubyText("金貨", "きんか")}が はいっています。${rubyText("全", "ぜん")}${rubyText("部", "ぶ")}で ${rubyText("何", "なん")}${rubyText("枚", "まい")}？`,
+            jaReading: `${problem.a}この たからばこに ${problem.b}まいずつ きんかが はいっています。ぜんぶで なんまい？`,
           },
           {
-            en:
-              `${quantityA} dragons guard ${quantityB} glowing gems each. ` +
-              `How many gems are being guarded in all?`,
-            jaHtml:
-              `${problem.a}${rubyText("匹", "ひき")}の ドラゴンが ${problem.b}${rubyText("個", "こ")}ずつ ` +
-              `${rubyText("光", "ひか")}る ${rubyText("宝石", "ほうせき")}を まもっています。` +
-              `${rubyText("全", "ぜん")}${rubyText("部", "ぶ")}で ${rubyText("何", "なん")}${rubyText("個", "こ")}？`,
-            jaReading:
-              `${problem.a}ひきの ドラゴンが ${problem.b}こずつ ひかる ほうせきを まもっています。ぜんぶで なんこ？`,
+            en: `${aDisplay} dancers practice ${bDisplay} spins in every round. How many spins happen after all the rounds?`,
+            jaHtml: `${problem.a}${rubyText("回", "かい")}の れんしゅうで、まいかい ${problem.b}${rubyText("回", "かい")}ずつ まわります。${rubyText("全", "ぜん")}${rubyText("部", "ぶ")}で ${rubyText("何", "なん")}${rubyText("回", "かい")}？`,
+            jaReading: `${problem.a}かいの れんしゅうで、まいかい ${problem.b}かいずつ まわります。ぜんぶで なんかい？`,
           },
           {
-            en:
-              `${quantityA} dancers practice ${quantityB} spins in every round. ` +
-              `How many spins happen after all the rounds?`,
-            jaHtml:
-              `${problem.a}${rubyText("回", "かい")}の れんしゅうで、まいかい ${problem.b}${rubyText("回", "かい")}ずつ まわります。` +
-              `${rubyText("全", "ぜん")}${rubyText("部", "ぶ")}で ${rubyText("何", "なん")}${rubyText("回", "かい")}？`,
-            jaReading:
-              `${problem.a}かいの れんしゅうで、まいかい ${problem.b}かいずつ まわります。ぜんぶで なんかい？`,
-          },
-          {
-            en:
-              `${quantityA} bakery trays carry ${quantityB} moon cookies each. ` +
-              `How many cookies are on all the trays?`,
-            jaHtml:
-              `${problem.a}${rubyText("枚", "まい")}の トレーに ${problem.b}${rubyText("個", "こ")}ずつ ` +
-              `つきの クッキーが のっています。${rubyText("全", "ぜん")}${rubyText("部", "ぶ")}で ` +
-              `${rubyText("何", "なん")}${rubyText("個", "こ")}？`,
-            jaReading:
-              `${problem.a}まいの トレーに ${problem.b}こずつ クッキーが のっています。ぜんぶで なんこ？`,
+            en: `${aDisplay} dragons guard ${bDisplay} glowing gems each. How many gems are being guarded in all?`,
+            jaHtml: `${problem.a}${rubyText("匹", "ひき")}の ドラゴンが ${problem.b}${rubyText("個", "こ")}ずつ ${rubyText("光", "ひか")}る ${rubyText("宝石", "ほうせき")}を まもっています。${rubyText("全", "ぜん")}${rubyText("部", "ぶ")}で ${rubyText("何", "なん")}${rubyText("個", "こ")}？`,
+            jaReading: `${problem.a}ひきの ドラゴンが ${problem.b}こずつ ひかる ほうせきを まもっています。ぜんぶで なんこ？`,
           },
         ]
       : [
           {
-            en:
-              `${englishQuantity(problem.a, config.allowWordNumberMix)} stickers are shared equally among ${quantityB} teammates. ` +
-              `How many stickers does each teammate get?`,
-            jaHtml:
-              `${problem.a}${rubyText("枚", "まい")}の シールを ${problem.b}${rubyText("人", "にん")}の ` +
-              `${rubyText("友達", "ともだち")}で ${rubyText("同", "おな")}じずつ ${rubyText("分", "わ")}けます。` +
-              `1${rubyText("人", "にん")}${rubyText("分", "ぶん")}は ${rubyText("何", "なん")}${rubyText("枚", "まい")}？`,
-            jaReading:
-              `${problem.a}まいの シールを ${problem.b}にんの ともだちで おなじずつ わけます。ひとりぶんは なんまい？`,
+            en: `${englishQuantity(problem.a)} stickers are shared equally among ${bDisplay} teammates. How many stickers does each teammate get?`,
+            jaHtml: `${problem.a}${rubyText("枚", "まい")}の シールを ${problem.b}${rubyText("人", "にん")}の ${rubyText("友達", "ともだち")}で ${rubyText("同", "おな")}じずつ ${rubyText("分", "わ")}けます。1${rubyText("人", "にん")}${rubyText("分", "ぶん")}は ${rubyText("何", "なん")}${rubyText("枚", "まい")}？`,
+            jaReading: `${problem.a}まいの シールを ${problem.b}にんの ともだちで おなじずつ わけます。ひとりぶんは なんまい？`,
           },
           {
-            en:
-              `${englishQuantity(problem.a, config.allowWordNumberMix)} noodles are packed into ${quantityB} bowls evenly. ` +
-              `How many noodles go in each bowl?`,
-            jaHtml:
-              `${problem.a}${rubyText("本", "ほん")}の めんを ${problem.b}${rubyText("個", "こ")}の どんぶりに ` +
-              `${rubyText("同", "おな")}じずつ ${rubyText("入", "い")}れます。1${rubyText("個", "こ")}の どんぶりには ` +
-              `${rubyText("何", "なん")}${rubyText("本", "ほん")}？`,
-            jaReading:
-              `${problem.a}ほんの めんを ${problem.b}この どんぶりに おなじずつ いれます。ひとつには なんぼん？`,
+            en: `${englishQuantity(problem.a)} stars are arranged into ${bDisplay} equal constellations. How many stars are in each constellation?`,
+            jaHtml: `${problem.a}${rubyText("個", "こ")}の ${rubyText("星", "ほし")}を ${problem.b}${rubyText("個", "こ")}の ${rubyText("同", "おな")}じ ${rubyText("星座", "せいざ")}に ${rubyText("分", "わ")}けます。1つの ${rubyText("星座", "せいざ")}は ${rubyText("何", "なん")}${rubyText("個", "こ")}？`,
+            jaReading: `${problem.a}この ほしを ${problem.b}この おなじ せいざに わけます。ひとつの せいざは なんこ？`,
           },
           {
-            en:
-              `${englishQuantity(problem.a, config.allowWordNumberMix)} stars are arranged into ${quantityB} equal constellations. ` +
-              `How many stars are in each constellation?`,
-            jaHtml:
-              `${problem.a}${rubyText("個", "こ")}の ${rubyText("星", "ほし")}を ${problem.b}${rubyText("個", "こ")}の ` +
-              `${rubyText("同", "おな")}じ ${rubyText("星座", "せいざ")}に ${rubyText("分", "わ")}けます。1つの ${rubyText("星座", "せいざ")}は ` +
-              `${rubyText("何", "なん")}${rubyText("個", "こ")}？`,
-            jaReading:
-              `${problem.a}この ほしを ${problem.b}この おなじ せいざに わけます。ひとつの せいざは なんこ？`,
-          },
-          {
-            en:
-              `${englishQuantity(problem.a, config.allowWordNumberMix)} game points are split across ${quantityB} players evenly. ` +
-              `How many points does each player get?`,
-            jaHtml:
-              `${problem.a}${rubyText("点", "てん")}を ${problem.b}${rubyText("人", "にん")}の プレイヤーで ` +
-              `${rubyText("同", "おな")}じずつ ${rubyText("分", "わ")}けます。1${rubyText("人", "にん")}${rubyText("分", "ぶん")}は ` +
-              `${rubyText("何", "なん")}${rubyText("点", "てん")}？`,
-            jaReading:
-              `${problem.a}てんを ${problem.b}にんの プレイヤーで おなじずつ わけます。ひとりぶんは なんてん？`,
+            en: `${englishQuantity(problem.a)} game points are split across ${bDisplay} players evenly. How many points does each player get?`,
+            jaHtml: `${problem.a}${rubyText("点", "てん")}を ${problem.b}${rubyText("人", "にん")}の プレイヤーで ${rubyText("同", "おな")}じずつ ${rubyText("分", "わ")}けます。1${rubyText("人", "にん")}${rubyText("分", "ぶん")}は ${rubyText("何", "なん")}${rubyText("点", "てん")}？`,
+            jaReading: `${problem.a}てんを ${problem.b}にんの プレイヤーで おなじずつ わけます。ひとりぶんは なんてん？`,
           },
         ];
     const scenario = scenarios[Math.floor(Math.random() * scenarios.length)];
@@ -461,6 +435,7 @@
           ? `<span class="prompt-kicker">Read it</span>${scenario.en}`
           : `<span class="prompt-kicker">よんでみよう</span>${scenario.jaHtml}`,
       spokenText: problem.language === "English" ? scenario.en : scenario.jaReading,
+      plainPrompt: problem.language === "English" ? scenario.en : scenario.jaReading,
       visual: null,
     };
   }
@@ -469,16 +444,16 @@
     return `<ruby>${kanji}<rt>${reading}</rt></ruby>`;
   }
 
-  function englishQuantity(value, allowWords) {
-    if (!allowWords || value > 20) {
+  function englishQuantity(value) {
+    if (value > 20) {
       return String(value);
     }
     const word = numberToEnglishWord(value);
-    const pattern = Math.random();
-    if (pattern < 0.34) {
+    const roll = Math.random();
+    if (roll < 0.34) {
       return String(value);
     }
-    if (pattern < 0.67) {
+    if (roll < 0.67) {
       return word;
     }
     return `${value} (${word})`;
@@ -490,24 +465,7 @@
       "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
       "seventeen", "eighteen", "nineteen", "twenty",
     ];
-    if (value <= 20) {
-      return small[value];
-    }
-    const tens = {
-      30: "thirty",
-      40: "forty",
-      50: "fifty",
-      60: "sixty",
-      70: "seventy",
-      80: "eighty",
-      90: "ninety",
-    };
-    if (value < 100) {
-      const tenPart = Math.floor(value / 10) * 10;
-      const onePart = value % 10;
-      return onePart === 0 ? tens[tenPart] : `${tens[tenPart]}-${small[onePart]}`;
-    }
-    return String(value);
+    return small[value] || String(value);
   }
 
   function sayEquation(problem) {
@@ -522,15 +480,21 @@
       : `${problem.a} わる ${problem.b}`;
   }
 
+  function stripHtml(html) {
+    const div = document.createElement("div");
+    div.innerHTML = html;
+    return div.textContent || div.innerText || "";
+  }
+
   function renderProblem(problem) {
     elements.modeLabel.textContent = problem.modeLabel;
     elements.languageLabel.textContent =
       problem.language === "English" ? "English question on screen and audio" : "日本語の問題を表示と音声で";
     elements.promptText.innerHTML = problem.promptHtml;
     elements.answerInput.value = "";
-    elements.answerInput.focus();
     renderVisual(problem.visual);
     clearFeedback();
+    elements.answerInput.focus();
   }
 
   function renderVisual(visual) {
@@ -559,26 +523,29 @@
     }
     stopSpeaking();
     state.gameStarted = true;
+    state.paused = false;
+    state.pauseReason = "";
+    state.nextAction = "continue";
     elements.startRow.classList.add("hidden");
+    hidePauseCard();
     stopTimer();
     const problem = buildProblem();
     state.currentProblem = problem;
     state.profile.seenProblemIds.push(problem.id);
     state.profile.seenProblemIds = state.profile.seenProblemIds.slice(-80);
-    state.timerValue = problem.timer;
     renderProblem(problem);
+    state.timerValue = problem.timer;
     updateDashboard();
     startTimer();
     speak(problem.spokenText, detectSpeechLang(problem.spokenText));
   }
 
-  function detectSpeechLang(text) {
-    return /[ぁ-んァ-ン一-龯]/.test(text) ? "ja-JP" : "en-US";
-  }
-
   function startTimer() {
     elements.timerLabel.textContent = String(state.timerValue);
     state.timerId = window.setInterval(() => {
+      if (state.paused) {
+        return;
+      }
       state.timerValue -= 1;
       elements.timerLabel.textContent = String(Math.max(0, state.timerValue));
       if (state.timerValue <= 0) {
@@ -594,12 +561,56 @@
     }
   }
 
-  function handleSubmit() {
-    if (!state.currentProblem) {
+  function pauseCurrent(reason, copy, nextAction) {
+    state.paused = true;
+    state.pauseReason = reason;
+    state.nextAction = nextAction || "resume-current";
+    stopTimer();
+    elements.pauseCard.classList.remove("hidden");
+    elements.pauseTitle.textContent =
+      reason === "wrong" ? "Pause and Reflect" :
+      reason === "level-up" ? "Level Complete" :
+      "Paused";
+    elements.pauseCopy.textContent = copy;
+    elements.pauseResumeButton.textContent =
+      nextAction === "next-problem" ? "Next Problem" :
+      nextAction === "resume-current" ? "Resume Timer" :
+      "Continue";
+    elements.buddyPanel.classList.add("highlight");
+    elements.buddyStatus.textContent =
+      "Buddy spotlight: ask for a hint, a step-by-step explanation, or a simpler version of the problem.";
+    elements.answerInput.blur();
+  }
+
+  function hidePauseCard() {
+    elements.pauseCard.classList.add("hidden");
+    elements.buddyPanel.classList.remove("highlight");
+    elements.buddyStatus.textContent =
+      "Pause the game any time if you want the buddy to explain a problem.";
+  }
+
+  function resumeFromPause() {
+    const action = state.nextAction;
+    state.paused = false;
+    state.pauseReason = "";
+    hidePauseCard();
+    if (action === "resume-current" && state.currentProblem) {
+      startTimer();
+      elements.answerInput.focus();
       return;
     }
-    const raw = elements.answerInput.value.trim();
-    const answer = Number.parseInt(raw, 10);
+    startRound();
+  }
+
+  function detectSpeechLang(text) {
+    return /[ぁ-んァ-ン一-龯]/.test(text) ? "ja-JP" : "en-US";
+  }
+
+  function handleSubmit() {
+    if (!state.currentProblem || state.paused) {
+      return;
+    }
+    const answer = Number.parseInt(elements.answerInput.value.trim(), 10);
     if (Number.isNaN(answer)) {
       setFeedback("Enter or say a number. すうじで こたえてね。", "incorrect");
       return;
@@ -619,6 +630,10 @@
     stat.lastSeen = Date.now();
 
     let message;
+    let shouldPauseAfter = false;
+    let pauseCopy = "";
+    let nextAction = "continue";
+
     if (answer === problem.answer && !timedOut) {
       stat.correct += 1;
       stat.mastery = Math.min(10, stat.mastery + 2);
@@ -639,9 +654,18 @@
         : `${randomLine(coachVoices.incorrect)} Answer: ${problem.answer}`;
       setFeedback(message, "incorrect");
       playTone(false);
+      shouldPauseAfter = true;
+      nextAction = "next-problem";
+      pauseCopy = `Take a breath and look at the answer: ${problem.answer}. Ask the buddy if you want it explained in a simpler way.`;
     }
 
     const levelUpMessages = maybeLevelUp(activeProfile);
+    if (levelUpMessages.length) {
+      shouldPauseAfter = true;
+      nextAction = "next-problem";
+      pauseCopy = "You finished a level. Enjoy the pause, then continue when you are ready.";
+    }
+
     if (!state.profile.testMode) {
       saveProfile();
     }
@@ -654,8 +678,13 @@
     }
     const waited = Date.now() - speechStart;
     const remainder = Math.max(0, FEEDBACK_MIN_MS - waited);
+    await wait(remainder);
 
-    window.setTimeout(startRound, remainder + 300);
+    if (shouldPauseAfter) {
+      pauseCurrent(levelUpMessages.length ? "level-up" : "wrong", pauseCopy, nextAction);
+      return;
+    }
+    window.setTimeout(startRound, 300);
   }
 
   function maybeLevelUp(activeProfile) {
@@ -679,7 +708,7 @@
   }
 
   function triggerLevelPulse(level) {
-    document.body.dataset.levelTone = String((level - 1) % 5);
+    document.body.dataset.levelTone = String(levelToneIndex(level));
     document.body.classList.remove("level-up-pulse");
     void document.body.offsetWidth;
     document.body.classList.add("level-up-pulse");
@@ -687,6 +716,10 @@
     state.levelPulseTimer = window.setTimeout(() => {
       document.body.classList.remove("level-up-pulse");
     }, 1800);
+  }
+
+  function levelToneIndex(level) {
+    return Math.max(0, level - 1) % 5;
   }
 
   function handleTimeout() {
@@ -711,15 +744,14 @@
     const xpPercent = Math.max(0, Math.min(100, activeProfile.xpInLevel));
     elements.xpFill.style.width = `${xpPercent}%`;
     elements.xpLabel.textContent = `${xpPercent}%`;
-    elements.coachText.textContent = buildCoachText();
+    elements.coachText.textContent = buildCoachText(activeProfile);
     renderFocusFacts();
-    document.body.dataset.levelTone = String((activeProfile.level - 1) % 5);
+    document.body.dataset.levelTone = String(levelToneIndex(activeProfile.level));
     elements.timerToggle.classList.toggle("test-mode-active", state.profile.testMode);
     elements.timerModeLabel.textContent = state.profile.testMode ? "Test" : "Time";
   }
 
-  function buildCoachText() {
-    const activeProfile = getActiveProfile();
+  function buildCoachText(activeProfile) {
     const accuracy = activeProfile.totalAnswered
       ? Math.round((activeProfile.totalCorrect / activeProfile.totalAnswered) * 100)
       : 0;
@@ -736,35 +768,26 @@
   }
 
   function renderFocusFacts() {
-    if (state.profile.testMode) {
-      elements.focusFacts.innerHTML = "";
-      const chip = document.createElement("div");
-      chip.className = "fact-chip";
-      chip.textContent = "Test mode";
-      elements.focusFacts.appendChild(chip);
-      return;
-    }
-    const entriesVisible = Object.entries(state.profile.factStats)
-      .sort((left, right) => {
-        const a = left[1];
-        const b = right[1];
-        return (b.wrong - b.mastery) - (a.wrong - a.mastery);
-      })
-      .slice(0, 6);
     elements.focusFacts.innerHTML = "";
-    if (!entriesVisible.length) {
-      const chip = document.createElement("div");
-      chip.className = "fact-chip";
-      chip.textContent = "New learner";
-      elements.focusFacts.appendChild(chip);
+    if (state.profile.testMode) {
+      appendFactChip("Test mode");
       return;
     }
-    entriesVisible.forEach(([fact]) => {
-      const chip = document.createElement("div");
-      chip.className = "fact-chip";
-      chip.textContent = fact;
-      elements.focusFacts.appendChild(chip);
-    });
+    const entries = Object.entries(state.profile.factStats)
+      .sort((left, right) => (right[1].wrong - right[1].mastery) - (left[1].wrong - left[1].mastery))
+      .slice(0, 6);
+    if (!entries.length) {
+      appendFactChip("New learner");
+      return;
+    }
+    entries.forEach(([fact]) => appendFactChip(fact));
+  }
+
+  function appendFactChip(label) {
+    const chip = document.createElement("div");
+    chip.className = "fact-chip";
+    chip.textContent = label;
+    elements.focusFacts.appendChild(chip);
   }
 
   function randomLine(group) {
@@ -808,25 +831,13 @@
       if (voice.lang.toLowerCase().startsWith("ja")) {
         score += 10;
       }
-      ["kyoko", "otoya", "haruka", "sayaka", "nanami", "keita", "google 日本語", "sakura", "japanese"].forEach((token) => {
+      ["kyoko", "otoya", "haruka", "sayaka", "nanami", "keita", "japanese"].forEach((token) => {
         if (name.includes(token)) {
           score += 4;
         }
       });
-      ["compact", "novelty", "whisper"].forEach((token) => {
-        if (name.includes(token)) {
-          score -= 1;
-        }
-      });
-    } else {
-      if (voice.lang.toLowerCase().startsWith("en")) {
-        score += 10;
-      }
-      ["samantha", "ava", "victoria", "google us english", "allison", "serena", "daniel"].forEach((token) => {
-        if (name.includes(token)) {
-          score += 3;
-        }
-      });
+    } else if (voice.lang.toLowerCase().startsWith("en")) {
+      score += 10;
     }
     if (voice.localService) {
       score += 1;
@@ -841,45 +852,80 @@
     if (!state.voices.length) {
       return null;
     }
-    const compatible = state.voices.filter((voice) => voice.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase()));
+    const compatible = state.voices.filter((voice) =>
+      voice.lang.toLowerCase().startsWith(lang.slice(0, 2).toLowerCase())
+    );
     const pool = compatible.length ? compatible : state.voices;
-    return pool
-      .slice()
-      .sort((left, right) => scoreVoice(right, lang) - scoreVoice(left, lang))[0] || null;
+    return pool.slice().sort((a, b) => scoreVoice(b, lang) - scoreVoice(a, lang))[0] || null;
   }
 
   function stopSpeaking() {
+    if (state.activeAudio) {
+      state.activeAudio.pause();
+      URL.revokeObjectURL(state.activeAudio.src);
+      state.activeAudio = null;
+    }
     if (synth) {
       synth.cancel();
     }
     state.activeUtterance = null;
   }
 
-  function speak(text, lang) {
-    if (!synth || !text) {
+  async function speak(text, lang) {
+    if (!text) {
+      return;
+    }
+    const remoteWorked = await tryRemoteTts(text, lang);
+    if (remoteWorked) {
+      return;
+    }
+    return speakWithBrowser(text, lang);
+  }
+
+  async function tryRemoteTts(text, lang) {
+    if (state.ttsAvailable === false) {
+      return false;
+    }
+    try {
+      const response = await fetch("/.netlify/functions/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, language: lang }),
+      });
+      if (!response.ok) {
+        state.ttsAvailable = false;
+        return false;
+      }
+      const blob = await response.blob();
+      const audio = new Audio(URL.createObjectURL(blob));
+      state.activeAudio = audio;
+      state.ttsAvailable = true;
+      await new Promise((resolve) => {
+        audio.onended = resolve;
+        audio.onerror = resolve;
+        audio.play().catch(resolve);
+      });
+      state.activeAudio = null;
+      return true;
+    } catch (error) {
+      state.ttsAvailable = false;
+      return false;
+    }
+  }
+
+  function speakWithBrowser(text, lang) {
+    if (!synth) {
       return Promise.resolve();
     }
     return new Promise((resolve) => {
       const utterance = new SpeechSynthesisUtterance(text);
-      const voice = getPreferredVoice(lang);
+      utterance.voice = getPreferredVoice(lang);
       utterance.lang = lang;
-      utterance.voice = voice;
       utterance.rate = lang === "ja-JP" ? 0.9 : 0.98;
-      utterance.pitch = lang === "ja-JP" ? 1.05 : 1;
-      utterance.volume = 1;
-      utterance.onend = () => {
-        if (state.activeUtterance === utterance) {
-          state.activeUtterance = null;
-        }
-        resolve();
-      };
-      utterance.onerror = () => {
-        if (state.activeUtterance === utterance) {
-          state.activeUtterance = null;
-        }
-        resolve();
-      };
-      stopSpeaking();
+      utterance.pitch = lang === "ja-JP" ? 1.03 : 1;
+      utterance.onend = resolve;
+      utterance.onerror = resolve;
+      synth.cancel();
       state.activeUtterance = utterance;
       synth.speak(utterance);
     });
@@ -892,7 +938,6 @@
       return;
     }
     const recognition = new speechRecognition();
-    recognition.lang = "en-US";
     recognition.interimResults = false;
     recognition.maxAlternatives = 3;
     recognition.onresult = (event) => {
@@ -925,75 +970,85 @@
       return direct;
     }
     const map = {
-      zero: 0,
-      one: 1,
-      two: 2,
-      three: 3,
-      four: 4,
-      five: 5,
-      six: 6,
-      seven: 7,
-      eight: 8,
-      nine: 9,
-      ten: 10,
-      eleven: 11,
-      twelve: 12,
-      thirteen: 13,
-      fourteen: 14,
-      fifteen: 15,
-      sixteen: 16,
-      seventeen: 17,
-      eighteen: 18,
-      nineteen: 19,
-      twenty: 20,
-      ichi: 1,
-      ni: 2,
-      san: 3,
-      yon: 4,
-      go: 5,
-      roku: 6,
-      nana: 7,
-      hachi: 8,
-      kyuu: 9,
-      juu: 10,
+      zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5,
+      six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+      eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+      sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
+      ichi: 1, ni: 2, san: 3, yon: 4, go: 5, roku: 6, nana: 7, hachi: 8, kyuu: 9, juu: 10,
     };
-    if (map[cleaned] !== undefined) {
-      return map[cleaned];
+    return map[cleaned] !== undefined ? map[cleaned] : null;
+  }
+
+  function addBuddyMessage(role, text) {
+    state.buddyMessages.push({ role, text });
+    state.buddyMessages = state.buddyMessages.slice(-16);
+    renderBuddyMessages();
+  }
+
+  function renderBuddyMessages() {
+    elements.buddyLog.innerHTML = "";
+    if (!state.buddyMessages.length) {
+      addBuddyMessage("buddy", "I can explain the current problem, give a hint, or make it simpler.");
+      return;
     }
-    const englishParts = cleaned.replace(/-/g, " ").split(/\s+/).filter(Boolean);
-    const englishSmall = {
-      zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
-      ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
-      sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
-    };
-    const englishTens = {
-      twenty: 20,
-      thirty: 30,
-      forty: 40,
-      fifty: 50,
-      sixty: 60,
-      seventy: 70,
-      eighty: 80,
-      ninety: 90,
-    };
-    let englishCurrent = 0;
-    let matchedEnglish = false;
-    for (const part of englishParts) {
-      if (englishSmall[part] !== undefined) {
-        englishCurrent += englishSmall[part];
-        matchedEnglish = true;
-      } else if (englishTens[part] !== undefined) {
-        englishCurrent += englishTens[part];
-        matchedEnglish = true;
-      } else if (part !== "and") {
-        matchedEnglish = false;
-        break;
+    state.buddyMessages.forEach((message) => {
+      const item = document.createElement("div");
+      item.className = `buddy-message ${message.role}`;
+      item.textContent = message.text;
+      elements.buddyLog.appendChild(item);
+    });
+    elements.buddyLog.scrollTop = elements.buddyLog.scrollHeight;
+  }
+
+  async function askBuddy(prompt) {
+    const problem = state.currentProblem;
+    if (!problem) {
+      addBuddyMessage("buddy", "Start a round first, then I can help with that problem.");
+      return;
+    }
+    addBuddyMessage("user", prompt);
+    elements.buddyStatus.textContent = "Buddy is thinking...";
+    try {
+      const response = await fetch("/.netlify/functions/buddy-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userMessage: prompt,
+          problem: {
+            text: problem.plainPrompt,
+            answer: problem.answer,
+            language: problem.language,
+            mode: problem.modeLabel,
+          },
+          pauseReason: state.pauseReason,
+        }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        addBuddyMessage("buddy", data.reply);
+        elements.buddyStatus.textContent = "Buddy is ready.";
+        return;
       }
+    } catch (error) {
+      console.warn("Buddy fallback", error);
     }
-    if (matchedEnglish) {
-      return englishCurrent;
+    addBuddyMessage("buddy", localBuddyReply(prompt, problem));
+    elements.buddyStatus.textContent = "Buddy is ready.";
+  }
+
+  function localBuddyReply(prompt, problem) {
+    const lower = prompt.toLowerCase();
+    if (lower.includes("hint")) {
+      return problem.operator === "x"
+        ? "Hint: multiplication is equal groups. Count how many groups there are, then how many are in each group."
+        : "Hint: division means sharing equally. Ask how many groups there are and how many must go in each one.";
     }
-    return null;
+    if (lower.includes("answer")) {
+      return `The answer is ${problem.answer}. Try to explain why that answer fits the story or picture.`;
+    }
+    return problem.operator === "x"
+      ? "Try this: first find the number of groups, then the amount in each group, then put them together."
+      : "Try this: think about how the total is being shared fairly. What number fits in each equal group?";
   }
 
   async function checkForUpdates() {
@@ -1009,11 +1064,10 @@
         return;
       }
       if (version.version !== state.profile.lastVersion) {
-        elements.updateText.textContent =
-          "A new version is ready. The app will refresh after this round.";
         state.profile.lastVersion = version.version;
         state.pendingReload = true;
         saveProfile();
+        elements.updateText.textContent = "A new version is ready. It will refresh after the current round.";
       }
     } catch (error) {
       console.warn("Update check failed", error);
@@ -1027,16 +1081,26 @@
         handleSubmit();
       }
     });
+    elements.startButton.addEventListener("click", startRound);
+    elements.pauseButton.addEventListener("click", () => {
+      if (!state.currentProblem || state.paused) {
+        return;
+      }
+      pauseCurrent("manual", "Timer paused. Ask the buddy for help, then resume when you are ready.", "resume-current");
+    });
+    elements.pauseResumeButton.addEventListener("click", resumeFromPause);
+    elements.tipsButton.addEventListener("click", () => {
+      elements.tipsDrawer.classList.toggle("hidden");
+    });
     elements.repeatButton.addEventListener("click", () => {
       if (state.currentProblem) {
         speak(state.currentProblem.spokenText, detectSpeechLang(state.currentProblem.spokenText));
       }
     });
     elements.skipButton.addEventListener("click", () => {
-      evaluateAnswer(Number.NaN, true);
-    });
-    elements.startButton.addEventListener("click", () => {
-      startRound();
+      if (!state.paused) {
+        evaluateAnswer(Number.NaN, true);
+      }
     });
     elements.timerToggle.addEventListener("click", () => {
       state.profile.testMode = !state.profile.testMode;
@@ -1045,24 +1109,44 @@
       updateDashboard();
       setFeedback(
         state.profile.testMode
-          ? "Test mode on. This round will not change the learner's saved status."
+          ? "Test mode on. Progress changes will not affect the learner's saved stats."
           : "Test mode off. Real progress tracking is active again.",
         "correct"
       );
     });
     elements.micButton.addEventListener("click", () => {
-      if (!state.gameStarted) {
-        setFeedback("Press Start Round first.", "incorrect");
+      if (!state.currentProblem || state.paused) {
         return;
       }
       if (!state.recognition || state.recognitionBusy) {
         return;
       }
       state.recognitionBusy = true;
-      state.recognition.lang = state.currentProblem && state.currentProblem.language === "Japanese" ? "ja-JP" : "en-US";
+      state.recognition.lang = state.currentProblem.language === "Japanese" ? "ja-JP" : "en-US";
       elements.micButton.textContent = "Listening...";
       state.recognition.start();
     });
+    elements.buddySendButton.addEventListener("click", () => {
+      const prompt = elements.buddyInput.value.trim();
+      if (!prompt) {
+        return;
+      }
+      elements.buddyInput.value = "";
+      askBuddy(prompt);
+    });
+    elements.buddyInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        elements.buddySendButton.click();
+      }
+    });
+    elements.buddyHintButton.addEventListener("click", () => {
+      askBuddy("Give me a hint for this problem.");
+    });
+  }
+
+  function wait(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
   }
 
   function init() {
@@ -1073,14 +1157,15 @@
     setupRecognition();
     bindEvents();
     updateDashboard();
+    renderBuddyMessages();
     elements.languageLabel.textContent = "Press Start";
     elements.promptText.innerHTML =
-      `<span class="prompt-kicker">Ready?</span>Press Start Round to begin.<br />` +
-      `Every question will appear as visible text and can also be read aloud.`;
+      `<span class="prompt-kicker">Ready?</span>Press Start Round to begin.<br />Every question stays visible on screen, and the buddy can help if something feels confusing.`;
     elements.visualZone.innerHTML = "";
     elements.timerLabel.textContent = String(state.timerValue);
     elements.updateText.textContent =
-      "The app checks for new versions in the background and prefers higher-quality local voices when available.";
+      "The app checks for new versions in the background. If Netlify has an OpenAI key, the buddy and voice will use a more natural AI service.";
+    saveProfile();
     checkForUpdates();
     window.setInterval(checkForUpdates, 5 * 60 * 1000);
   }

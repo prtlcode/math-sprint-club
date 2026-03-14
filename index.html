@@ -49,6 +49,14 @@
             <div class="visual-zone" id="visualZone" aria-live="polite"></div>
           </div>
 
+          <div class="pause-card hidden" id="pauseCard">
+            <p class="pause-title" id="pauseTitle">Paused</p>
+            <p class="pause-copy" id="pauseCopy"></p>
+            <button id="pauseResumeButton" class="primary-button" type="button">
+              Resume
+            </button>
+          </div>
+
           <div class="input-row">
             <input
               id="answerInput"
@@ -67,18 +75,41 @@
           <div class="feedback" id="feedbackText" aria-live="polite"></div>
 
           <div class="start-row" id="startRow">
-            <button id="startButton" class="primary-button" type="button">
-              Start Round
-            </button>
+            <div class="ready-card">
+              <p class="ready-title">Ready?</p>
+              <ul class="hint-list ready-list">
+                <li>Every question appears on screen as text</li>
+                <li>Speak in English or Japanese, or type the number</li>
+                <li>Tap the buddy if a problem feels confusing</li>
+                <li>Beat the timer to protect your streak</li>
+              </ul>
+              <button id="startButton" class="primary-button" type="button">
+                Start Round
+              </button>
+            </div>
           </div>
 
           <div class="controls-row">
+            <button id="pauseButton" class="ghost-button" type="button">
+              Pause
+            </button>
+            <button id="tipsButton" class="ghost-button" type="button">
+              Tips
+            </button>
             <button id="repeatButton" class="ghost-button" type="button">
               Hear again
             </button>
             <button id="skipButton" class="ghost-button" type="button">
               Skip
             </button>
+          </div>
+
+          <div class="tips-drawer hidden" id="tipsDrawer">
+            <ul class="hint-list">
+              <li>Questions stay visible on screen even when audio plays</li>
+              <li>Test mode is hidden behind the timer</li>
+              <li>Pause if you want more thinking time or buddy help</li>
+            </ul>
           </div>
         </section>
 
@@ -97,14 +128,29 @@
             </p>
           </section>
 
-          <section>
-            <h2>How You Can Answer</h2>
-            <ul class="hint-list">
-              <li>Every question appears on screen as text</li>
-              <li>Speak in English or Japanese</li>
-              <li>Or type the number answer</li>
-              <li>Beat the timer to protect your streak</li>
-            </ul>
+          <section class="buddy-panel" id="buddyPanel">
+            <div class="buddy-heading">
+              <h2>Buddy</h2>
+              <button id="buddyHintButton" class="ghost-button compact-button" type="button">
+                Hint
+              </button>
+            </div>
+            <div class="buddy-log" id="buddyLog" aria-live="polite"></div>
+            <div class="buddy-input-row">
+              <input
+                id="buddyInput"
+                type="text"
+                autocomplete="off"
+                placeholder="Ask for help with this problem"
+                aria-label="Ask the buddy for help"
+              />
+              <button id="buddySendButton" class="primary-button" type="button">
+                Ask
+              </button>
+            </div>
+            <p class="microcopy" id="buddyStatus">
+              Pause the game any time if you want the buddy to explain a problem.
+            </p>
           </section>
 
           <section>
